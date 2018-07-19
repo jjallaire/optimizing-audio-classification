@@ -63,6 +63,16 @@ per_class_dataset <- function(class) {
 audio_files_dataset <- classes_dataset %>% 
   dataset_interleave(per_class_dataset, cycle_length = length(classes))
 
+# build lists of validation and testing files
+# audio_files_list <- function(list) {
+#   listing_file <- tf$string_join(list(data_dir, list), separator = "/")
+#   tf$string_split(list(tf$read_file(listing_file)), "\n")$values
+# }
+# validation_files <- audio_files_list("validation_list.txt")
+# testing_files <- audio_files_list("testing_list.txt")
+# non_training_files <- tf$concat(list(validation_files, testing_files), axis = 0L)
+
+#files <- tf$setdiff1d(files, non_training_files)
 
 
 
