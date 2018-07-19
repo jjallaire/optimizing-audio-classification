@@ -61,7 +61,7 @@ per_class_dataset <- function(class) {
 
 # interleave all of the per-class datasets
 audio_files_dataset <- classes_dataset %>% 
-  dataset_flat_map(per_class_dataset)
+  dataset_interleave(per_class_dataset, cycle_length = length(classes))
 
 
 
