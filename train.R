@@ -11,6 +11,9 @@ FLAGS <- flags(
   flag_string("data_gs_bucket", "gs://speech-commands-data/v0.01")
 )
 
+# new gs_bucket_data function that encapsulates the below?
+# or gs_data_dir or gs_data_source?
+
 # determine data_dir based on whether we are using local or gs bucket data
 # (if local then rsync from google storage)
 if (FLAGS$data_gs) {
@@ -42,7 +45,7 @@ tf$tables_initializer()
 classes_dataset <- tensor_slices_dataset(classes)
 
 # function which maps a directory to the shuffled records in those files
-per_class_dataset <- function(class) {
+dataset_for_class <- function(class) {
   
   # list files in directory
   glob <- tf$string_join(list(data_dir, class, "*.wav"), separator = "/")
@@ -61,7 +64,9 @@ per_class_dataset <- function(class) {
 
 # interleave all of the per-class datasets
 audio_files_dataset <- classes_dataset %>% 
-  dataset_interleave(per_class_dataset, cycle_length = length(classes))
+  dataset_interleave(dataset_for_class, cycle_length = length(classes))
+
+# maybe use static list of training files?
 
 # build lists of validation and testing files
 # audio_files_list <- function(list) {
