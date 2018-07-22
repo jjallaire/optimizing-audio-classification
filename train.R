@@ -1,30 +1,18 @@
 
 
-library(keras)
 library(tensorflow)
+tfe_enable_eager_execution()
+
 library(tfdatasets)
+library(keras)
+
 library(cloudml)
 
-# flags which control local vs. cloudml training behavior
-FLAGS <- flags(
-  flag_boolean("data_gs", FALSE),
-  flag_string("data_gs_bucket", "gs://speech-commands-data/v0.01")
-)
+# get reference to data directory
+data_dir <- gs_data_dir("gs://speech-commands-data/v0.01")
 
-# new gs_bucket_data function that encapsulates the below?
-# or gs_data_dir or gs_data_source?
 
-# determine data_dir based on whether we are using local or gs bucket data
-# (if local then rsync from google storage)
-if (FLAGS$data_gs) {
-  data_dir <- FLAGS$data_gs_bucket
-} else {
-  data_dir <- "data/speech_commands_v0.01"
-  if (!dir.exists(data_dir))
-    gs_rsync(FLAGS$data_gs_bucket, data_dir, recursive = TRUE)
-}
 
-tfe_enable_eager_execution()
 
 library(stringr)
 library(dplyr)
