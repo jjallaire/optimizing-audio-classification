@@ -1,122 +1,50 @@
 
 
 library(tensorflow)
-tfe_enable_eager_execution()
-
 library(tfdatasets)
 library(keras)
-
 library(cloudml)
+
+# tfe_enable_eager_execution()
 
 # get reference to data directory
 data_dir <- gs_data_dir("gs://speech-commands-data/v0.01")
 
-
-
-
-library(stringr)
-library(dplyr)
-library(fs)
-
-# initialize classes and factors
-classes <- tf$constant(
+# initialize class_id_table
+class_names <- tf$constant(
   c("bed", "bird", "cat", "dog", "down",  "eight", "five",
     "four", "go", "happy", "house", "left", "marvin", "nine", 
     "no", "off", "on", "one", "right", "seven", "sheila", "six",
     "stop", "three", "tree", "two", "up", "wow", "yes", "zero" )
 )
-class_id_table <- tf$contrib$lookup$index_table_from_tensor(classes)
+class_id_table <- tf$contrib$lookup$index_table_from_tensor(class_names)
 tf$tables_initializer()
 
 
-# start with all directories (one for each class)
-classes_dataset <- tensor_slices_dataset(classes)
-
-# function which maps a directory to the shuffled records in those files
-dataset_for_class <- function(class) {
-  
-  # list files in directory
-  glob <- tf$string_join(list(data_dir, class, "*.wav"), separator = "/")
-  files <- file_list_dataset(glob, shuffle = TRUE) 
-  
-  # determine class id
-  class_id <- class_id_table$lookup(class)
-  
-  # create dataset with filename, class, and class id
-  zip_datasets(
-    files,
-    tensors_dataset(class) %>% dataset_repeat(),
-    tensors_dataset(class_id) %>% dataset_repeat()
-  )
-}
-
-# interleave all of the per-class datasets
-audio_files_dataset <- classes_dataset %>% 
-  dataset_interleave(dataset_for_class, cycle_length = length(classes))
-
-# maybe use static list of training files?
-
-# build lists of validation and testing files
-# audio_files_list <- function(list) {
-#   listing_file <- tf$string_join(list(data_dir, list), separator = "/")
-#   tf$string_split(list(tf$read_file(listing_file)), "\n")$values
-# }
-# validation_files <- audio_files_list("validation_list.txt")
-# testing_files <- audio_files_list("testing_list.txt")
-# non_training_files <- tf$concat(list(validation_files, testing_files), axis = 0L)
-
-#files <- tf$setdiff1d(files, non_training_files)
-
-
-
-## TODO: use updated dataset (see README)
-## https://stackoverflow.com/questions/50356677/how-to-create-tf-data-dataset-from-directories-of-tfrecords
-
-
-
-
-files <- file_list_dataset(file.path(data_dir, "*.wav"))
-
-
-files <- dir_ls(
-  path = data_dir, 
-  recursive = TRUE, 
-  glob = "*.wav"
-)
-
-files <- files[!str_detect(files, "background_noise")]
-
-df <- data_frame(
-  fname = files, 
-  class = fname %>% str_extract("1/.*/") %>% 
-    str_replace_all("1/", "") %>%
-    str_replace_all("/", ""),
-  class_id = class %>% as.factor() %>% as.integer() - 1L
-)
-
-saveRDS(df, "data/df.rds")
-
 audio_ops <- tf$contrib$framework$python$ops$audio_ops
 
-data_generator <- function(df, batch_size, shuffle = TRUE, 
-                           window_size_ms = 30, window_stride_ms = 10) {
+audio_files_dataset <- function(split, batch_size, shuffle = TRUE, 
+                                window_size_ms = 30, window_stride_ms = 10) {
   
   window_size <- as.integer(16000*window_size_ms/1000)
   stride <- as.integer(16000*window_stride_ms/1000)
   fft_size <- as.integer(2^trunc(log(window_size, 2)) + 1)
   n_chunks <- length(seq(window_size/2, 16000 - window_size/2, stride))
   
-  ds <- tensor_slices_dataset(df)
+  ds <- text_line_dataset(file.path(data_dir, split))
   
   if (shuffle) 
     ds <- ds %>% dataset_shuffle(buffer_size = 100)  
   
   ds <- ds %>%
-    dataset_map(function(fname, class, class_id) {
+    dataset_map(num_parallel_calls = 4, function(file) {
+      
+      # form full path to file
+      path <- tf$string_join(list(data_dir, file), separator = "/")
       
       # decoding wav files
-      audio_binary <- tf$read_file(tf$reshape(fname, shape = list()))
-      wav <- audio_ops$decode_wav(audio_binary, desired_channels = 1)
+      audio_binary <- tf$read_file(path)
+      wav <- audio_ops$decode_wav(audio_binary, desired_channels = 1L)
       
       # create the spectrogram
       spectrogram <- audio_ops$audio_spectrogram(
@@ -129,6 +57,10 @@ data_generator <- function(df, batch_size, shuffle = TRUE,
       spectrogram <- tf$log(tf$abs(spectrogram) + 0.01)
       spectrogram <- tf$transpose(spectrogram, perm = c(1L, 2L, 0L))
       
+      # extract class name and lookup id
+      class_name <- tf$string_split(list(file), delimiter = "/")$values[[1]]
+      class_id <- class_id_table$lookup(class_name)
+      
       # transform the class_id into a one-hot encoded vector
       response <- tf$one_hot(class_id, 30L)
       
@@ -137,17 +69,14 @@ data_generator <- function(df, batch_size, shuffle = TRUE,
     dataset_repeat()
   
   ds <- ds %>% 
-    dataset_padded_batch(batch_size, list(shape(n_chunks, fft_size, NULL), shape(NULL)))
+    dataset_padded_batch(batch_size, list(shape(n_chunks, fft_size, NULL), shape(NULL)),
+                         drop_remainder = TRUE)
   
   ds
 }
 
-
-df <- readRDS("data/df.rds") %>% sample_frac(1)
-id_train <- sample(nrow(df), size = 0.7*nrow(df))
-
-ds_train <- data_generator(df[id_train,], 32L)
-ds_test <- data_generator(df[-id_train,], 32, shuffle = FALSE)
+ds_train <- audio_files_dataset("split_training.txt", 32L)
+ds_test <- audio_files_dataset("split_testing.txt", 32, shuffle = FALSE)
 
 
 model <- keras_model_sequential()
@@ -175,12 +104,12 @@ model %>% compile(
 )
 
 # Train model
-model %>% fit_generator(
-  generator = ds_train,
-  steps_per_epoch = 0.7*nrow(df)/32,
+model %>% fit(
+  ds_train,
+  steps_per_epoch = 1000,
   epochs = 10, 
   validation_data = ds_test, 
-  validation_steps = 0.3*nrow(df)/32
+  validation_steps = 1000
 )
 
 save_model_hdf5(model, "model.hdf5")
