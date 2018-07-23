@@ -18,7 +18,10 @@ class_names <- tf$constant(
     "stop", "three", "tree", "two", "up", "wow", "yes", "zero" )
 )
 class_id_table <- tf$contrib$lookup$index_table_from_tensor(class_names)
-tf$tables_initializer()
+sess <- k_get_session()
+sess$run(tf$tables_initializer())
+
+
 
 
 audio_ops <- tf$contrib$framework$python$ops$audio_ops
@@ -58,6 +61,7 @@ audio_files_dataset <- function(split, batch_size, shuffle = TRUE,
       spectrogram <- tf$transpose(spectrogram, perm = c(1L, 2L, 0L))
       
       # extract class name and lookup id
+      # https://stackoverflow.com/questions/44374083/tensorflow-cannot-capture-a-stateful-node-by-value-in-tf-contrib-data-api?rq=1
       class_name <- tf$string_split(list(file), delimiter = "/")$values[[1]]
       class_id <- class_id_table$lookup(class_name)
       
